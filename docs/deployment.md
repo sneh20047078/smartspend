@@ -1,0 +1,9 @@
+# Deployment notes (foundation only)
+
+The current SAM template provisions the phase-1/3 HTTP API, Lambda, Cognito User Pool/client, profile table, owner/date-indexed transactions table, owner-scoped budgets table, and TTL-backed idempotency table. It is not yet a complete SmartSpend deployment and should be reviewed before use with real users.
+
+From the repository root, install AWS SAM CLI, configure an AWS profile, then run `sam build --template-file infrastructure/template.yaml` followed by `sam deploy --guided --template-file infrastructure/template.yaml`. Select a unique stack name and region, and review every change set. The template uses on-demand DynamoDB billing and one Lambda; AWS charges may still apply for API, Lambda, Cognito, logs, data transfer, and storage. Avoid deploying resources you do not need.
+
+Set frontend build variables to the stack's Cognito pool/client IDs, region, and API URL (including the configured API stage). Do not set AWS access keys in frontend variables. Lambda receives resource identifiers from CloudFormation; no long-lived credentials are needed. IAM grants the Lambda profile, transaction, budget, and idempotency-table access required by implemented handlers. Review API authorizer behavior and set production CORS origins before deployment.
+
+To remove the development stack, run `sam delete --stack-name <stack-name> --region <region>` after confirming data retention/export needs. The user pool and tables have deletion protection disabled in this cost-conscious development foundation; deletion destroys all stored data. Point-in-time recovery is disabled. Do not use this setup for production records before backup, deletion, retention, alerting, and security policies are reviewed.

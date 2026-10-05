@@ -1,0 +1,354 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SmartSpend authentication, profile, and personal transactions foundation. Not production-hardened.
+
+Parameters:
+  WebOrigin:
+    Type: String
+    Default: http://localhost:5173
+    Description: Exact frontend origin allowed by API Gateway CORS.
+  ApiStageName:
+    Type: String
+    Default: v1
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 15
+    MemorySize: 256
+    Tracing: Active
+    Environment:
+      Variables:
+        APP_ENV: aws
+        SMARTSPEND_AWS_REGION: !Ref AWS::Region
+        COGNITO_USER_POOL_ID: !Ref SmartSpendUserPool
+        COGNITO_APP_CLIENT_ID: !Ref SmartSpendUserPoolClient
+        PROFILE_TABLE: !Ref ProfilesTable
+        TRANSACTIONS_TABLE: !Ref TransactionsTable
+        BUDGETS_TABLE: !Ref BudgetsTable
+        IDEMPOTENCY_TABLE: !Ref IdempotencyTable
+        API_CORS_ORIGINS: !Ref WebOrigin
+    LoggingConfig:
+      LogFormat: JSON
+      ApplicationLogLevel: INFO
+      SystemLogLevel: WARN
+
+Resources:
+  SmartSpendApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref ApiStageName
+      CorsConfiguration:
+        AllowOrigins: [!Ref WebOrigin]
+        AllowHeaders: [Authorization, Content-Type, Idempotency-Key, X-Request-ID]
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        MaxAge: 600
+      Auth:
+        DefaultAuthorizer: CognitoJwtAuthorizer
+        Authorizers:
+          CognitoJwtAuthorizer:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${SmartSpendUserPool}
+              audience: [!Ref SmartSpendUserPoolClient]
+
+  SmartSpendUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub smartspend-${AWS::StackName}
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 3
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+        - Name: name
+          Required: false
+          Mutable: true
+
+  SmartSpendUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref SmartSpendUserPool
+      ClientName: !Sub smartspend-web-${AWS::StackName}
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders: [COGNITO]
+      ReadAttributes: [email, name, email_verified]
+      WriteAttributes: [email, name]
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  ProfilesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub smartspend-profiles-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: subject
+          AttributeType: S
+      KeySchema:
+        - AttributeName: subject
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub smartspend-transactions-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_id
+          AttributeType: S
+        - AttributeName: transaction_id
+          AttributeType: S
+        - AttributeName: occurred_sort_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_id
+          KeyType: HASH
+        - AttributeName: transaction_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: OwnerOccurredAtIndex
+          KeySchema:
+            - AttributeName: owner_id
+              KeyType: HASH
+            - AttributeName: occurred_sort_key
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  BudgetsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub smartspend-budgets-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_id
+          AttributeType: S
+        - AttributeName: budget_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_id
+          KeyType: HASH
+        - AttributeName: budget_id
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  IdempotencyTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub smartspend-idempotency-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_operation
+          AttributeType: S
+        - AttributeName: idempotency_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_operation
+          KeyType: HASH
+        - AttributeName: idempotency_key
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  ProfileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../backend/
+      Handler: app.main.lambda_handler
+      Policies:
+        - PolicyName: SmartSpendDataLeastPrivilege
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt ProfilesTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt TransactionsTable.Arn
+                  - !Sub '${TransactionsTable.Arn}/index/*'
+                  - !GetAtt BudgetsTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt IdempotencyTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:TransactWriteItems
+                Resource:
+                  - !GetAtt TransactionsTable.Arn
+                  - !GetAtt BudgetsTable.Arn
+                  - !GetAtt IdempotencyTable.Arn
+      Events:
+        PublicHealth:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        LocalDevAuthDisabledInAws:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /auth/dev-login
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        Logout:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /auth/logout
+            Method: POST
+        ReadProfile:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /me
+            Method: GET
+        UpdateProfile:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /me
+            Method: PATCH
+        CreateTransaction:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /transactions
+            Method: POST
+        ListTransactions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /transactions
+            Method: GET
+        ReadTransaction:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /transactions/{transaction_id}
+            Method: GET
+        UpdateTransaction:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /transactions/{transaction_id}
+            Method: PATCH
+        DeleteTransaction:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /transactions/{transaction_id}
+            Method: DELETE
+        Dashboard:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /dashboard
+            Method: GET
+        CreateBudget:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /budgets
+            Method: POST
+        ListBudgets:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /budgets
+            Method: GET
+        ReadBudget:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /budgets/{budget_id}
+            Method: GET
+        UpdateBudget:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /budgets/{budget_id}
+            Method: PATCH
+        DeleteBudget:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /budgets/{budget_id}
+            Method: DELETE
+
+Outputs:
+  ApiBaseUrl:
+    Description: SmartSpend API base URL
+    Value: !Sub https://${SmartSpendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${ApiStageName}
+  CognitoUserPoolId:
+    Value: !Ref SmartSpendUserPool
+  CognitoUserPoolClientId:
+    Value: !Ref SmartSpendUserPoolClient
+  ProfileTableName:
+    Value: !Ref ProfilesTable
+  TransactionsTableName:
+    Value: !Ref TransactionsTable
+  BudgetsTableName:
+    Value: !Ref BudgetsTable
+  IdempotencyTableName:
+    Value: !Ref IdempotencyTable
