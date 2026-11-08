@@ -1,14 +1,14 @@
 # Architecture and milestones
 
-The React SPA talks to a typed REST API. Local development runs the FastAPI app over uvicorn; the same ASGI application is adapted to Lambda by Mangum. The AWS handler verifies Cognito ID-token signatures using Cognito's JWKS and restricts issuer, client audience, token type, expiry, subject, and email. Production profile storage uses DynamoDB; local development uses SQLite. The local email sign-in issues a short-lived development JWT with an explicit local issuer/audience and is rejected when `APP_ENV` is not `local`.
+The React SPA talks to a typed REST API. Local development runs the FastAPI app over uvicorn; the same ASGI application is adapted to Lambda by Mangum. The AWS handler verifies Cognito ID-token signatures using Cognito's JWKS and restricts issuer, client audience, token type, expiry, subject, and email. Production profile, transaction, budget, group, and shared-expense storage uses owner-scoped DynamoDB adapters; local development uses SQLite. AWS configuration validation fails closed rather than falling back to SQLite. The local email sign-in issues a short-lived development JWT with an explicit local issuer/audience and is rejected when `APP_ENV` is not `local`.
 
 Backend boundaries use Pydantic models for external validation, repositories for storage, a transaction service for financial aggregation, and HTTP/Lambda adapters. Amounts use integer minor units. Client user IDs are never authorization inputs. API CORS is explicit-origin only. Logs include request correlation and exception type only, not profile or financial fields.
 
 1. **Phase 1 (implemented):** authentication boundary, protected profile operations, theme/currency/timezone preferences, tests.
-2. **Phase 2 (implemented):** owner-scoped income/expense CRUD, idempotent create, version-checked edit/delete, filters/search/cursor pagination, currency-separated dashboard totals, Recharts trends, and tests. Recurring schedule generation remains pending.
-3. **Phase 3 (implemented):** monthly/custom period and category budgets, live spending progress, versioned CRUD, and in-app threshold status. Outbound notifications remain pending.
-4. Phase 4: groups/memberships, equal/custom shares, group currency invariant, balances, settlement history, and netting.
-5. Phase 5: private reports, charts, CSV export, and settings completion.
-6. Phase 6: full SAM deployment, least-privilege policies, backups/deletion behavior, integration/security tests, and environment-specific rollout.
+2. **Phase 2 (implemented):** owner-scoped income/expense CRUD, idempotent create, version-checked edit/delete, filters/search/cursor pagination, currency-separated dashboard totals, Recharts trends, and idempotent recurring expense generation when an authenticated app session starts or an owner requests due processing. No background scheduler runs while offline.
+3. **Phase 3 (implemented):** monthly/custom period and category budgets, live spending progress, versioned CRUD, in-app budget alert center, and tests. Outbound email/push/SMS notifications remain pending.
+4. **Phase 4 (implemented):** owner-scoped groups, equal/custom shares, group currency invariant, expense history, balances, and deterministic settlement netting. A suggested settlement does not record a completed payment.
+5. **Phase 5 (implemented):** date/currency-filtered reports, per-currency visualizations, paginated owner-scoped transaction CSV export, and profile/preferences settings with privacy guidance.
+6. **Phase 6 implementation (locally validated):** owner-scoped DynamoDB adapters/routes, least-privilege SAM configuration, hosting template, CI, and staging automation are implemented. The templates pass SAM validation/build. Live AWS staging end-to-end verification and production rollout review remain pending; local checks do not constitute cloud verification.
 
 A net settlement plan is one valid plan and may not be unique. A settlement is only completed after an explicit payment record; viewing a settlement never changes its status. AWS use can incur charges. No regulatory compliance is asserted.

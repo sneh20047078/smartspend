@@ -69,6 +69,93 @@ export type BudgetCategoryProgress = {
 export type BudgetStatus = Omit<Budget, 'created_at' | 'updated_at'> & { categories: BudgetCategoryProgress[] };
 export type BudgetStatusPage = { items: BudgetStatus[] };
 
+export type GroupRecord = {
+  group_id: string;
+  name: string;
+  description: string | null;
+  currency: string;
+  members: string[];
+  created_at: string;
+  updated_at: string;
+  version: number;
+};
+export type GroupDraft = {
+  name: string;
+  description: string | null;
+  currency: string;
+  members: string[];
+};
+export type GroupPatch = {
+  expected_version: number;
+  name?: string;
+  description?: string | null;
+  members?: string[];
+};
+export type GroupExpenseDraft = {
+  description: string;
+  amount_minor: number;
+  currency: string;
+  paid_by: string;
+  split_type: 'equal' | 'custom';
+  splits: Record<string, number> | null;
+  occurred_at: string;
+};
+export type GroupExpense = {
+  expense_id: string;
+  group_id: string;
+  description: string;
+  amount_minor: number;
+  currency: string;
+  paid_by: string;
+  split_type: 'equal' | 'custom';
+  splits: Record<string, number>;
+  occurred_at: string;
+  created_at: string;
+  updated_at: string;
+  version: number;
+};
+export type GroupBalance = { member_id: string; net_minor: number };
+export type GroupSettlement = { from_member: string; to_member: string; amount_minor: number };
+export type GroupSettlementSummary = {
+  group_id: string;
+  currency: string;
+  members: string[];
+  balances: GroupBalance[];
+  settlements: GroupSettlement[];
+  expenses: GroupExpense[];
+};
+export type RecurrenceFrequency = 'weekly' | 'monthly';
+export type RecurringSchedule = {
+  schedule_id: string;
+  description: string;
+  amount_minor: number;
+  currency: string;
+  category: string;
+  notes: string | null;
+  payment_method: PaymentMethod | null;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  starts_on: string;
+  ends_on: string | null;
+  next_occurrence_on: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  version: number;
+};
+export type RecurrenceDraft = {
+  description: string;
+  amount_minor: number;
+  currency: string;
+  category: string;
+  notes: string | null;
+  payment_method: PaymentMethod | null;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  starts_on: string;
+  ends_on: string | null;
+};
+
 export const currencyExponent: Record<string, number> = {
   USD: 2, CAD: 2, EUR: 2, GBP: 2, AUD: 2, NZD: 2, JPY: 0,
 };
@@ -176,5 +263,59 @@ export const financeApi = {
   deleteBudget(token: string, budgetId: string, expectedVersion: number) {
     const query = new URLSearchParams({ expected_version: String(expectedVersion) });
     return request<void>(`/budgets/${encodeURIComponent(budgetId)}?${query.toString()}`, token, { method: 'DELETE' });
+  },
+  listGroups(token: string) {
+    return request<GroupRecord[]>('/groups', token);
+  },
+  createGroup(token: string, draft: GroupDraft, idempotencyKey: string) {
+    return request<GroupRecord>('/groups', token, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(draft),
+    });
+  },
+  updateGroup(token: string, groupId: string, patch: GroupPatch) {
+    return request<GroupRecord>(`/groups/${encodeURIComponent(groupId)}`, token, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    });
+  },
+  deleteGroup(token: string, groupId: string, expectedVersion: number) {
+    const query = new URLSearchParams({ expected_version: String(expectedVersion) });
+    return request<void>(`/groups/${encodeURIComponent(groupId)}?${query.toString()}`, token, { method: 'DELETE' });
+  },
+  listGroupExpenses(token: string, groupId: string) {
+    return request<GroupExpense[]>(`/groups/${encodeURIComponent(groupId)}/expenses`, token);
+  },
+  createGroupExpense(token: string, groupId: string, draft: GroupExpenseDraft, idempotencyKey: string) {
+    return request<GroupExpense>(`/groups/${encodeURIComponent(groupId)}/expenses`, token, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(draft),
+    });
+  },
+  settlementSummary(token: string, groupId: string) {
+    return request<GroupSettlementSummary>(`/groups/${encodeURIComponent(groupId)}/settlements`, token);
+  },
+  listRecurrences(token: string) {
+    return request<RecurringSchedule[]>('/recurrences', token);
+  },
+  processDueRecurrences(token: string) {
+    return request<{ generated_count: number }>('/recurrences/process-due', token, { method: 'POST' });
+  },
+  createRecurrence(token: string, draft: RecurrenceDraft, idempotencyKey: string) {
+    return request<RecurringSchedule>('/recurrences', token, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(draft),
+    });
+  },
+  updateRecurrence(token: string, scheduleId: string, patch: { expected_version: number; enabled: boolean }) {
+    return request<RecurringSchedule>(`/recurrences/${encodeURIComponent(scheduleId)}`, token, {
+      method: 'PATCH', body: JSON.stringify(patch),
+    });
+  },
+  deleteRecurrence(token: string, scheduleId: string, expectedVersion: number) {
+    const query = new URLSearchParams({ expected_version: String(expectedVersion) });
+    return request<void>(`/recurrences/${encodeURIComponent(scheduleId)}?${query.toString()}`, token, { method: 'DELETE' });
   },
 };

@@ -18,6 +18,20 @@ def test_unauthenticated_profile_is_rejected(client):
     assert response.json()["error"]["code"] == "unauthorized"
 
 
+def test_local_cors_accepts_localhost_and_ipv4_loopback_aliases(client):
+    for origin in ("http://localhost:5173", "http://127.0.0.1:5173"):
+        response = client.options(
+            "/auth/register",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == origin
+
+
 def test_profile_update_is_scoped_to_authenticated_subject(client, auth_headers):
     response = client.patch("/me", headers=auth_headers, json={"display_name": "  Alex Rivera ", "preferred_currency": "cad", "timezone": "America/Toronto"})
     assert response.status_code == 200
@@ -68,7 +82,9 @@ def test_token_signature_is_verified(settings):
 def test_local_login_is_hidden_outside_local_environment(settings, tmp_path):
     from fastapi.testclient import TestClient
     from app.budget_repository import SQLiteBudgetRepository
+    from app.group_repository import SQLiteGroupRepository
     from app.main import create_app
+    from app.recurrence_repository import SQLiteRecurrenceRepository
     from app.repositories import SQLiteProfileRepository
     from app.transaction_repository import SQLiteTransactionRepository
 
@@ -79,6 +95,8 @@ def test_local_login_is_hidden_outside_local_environment(settings, tmp_path):
         SQLiteProfileRepository(database),
         SQLiteTransactionRepository(database),
         SQLiteBudgetRepository(database),
+        SQLiteGroupRepository(database),
+        SQLiteRecurrenceRepository(database),
     )
     assert TestClient(app).post("/auth/dev-login", json={"email": "a@example.com"}).status_code == 404
 
@@ -93,3 +111,34 @@ def test_local_login_requires_a_development_secret(settings, tmp_path):
     response = TestClient(app).post("/auth/dev-login", json={"email": "a@example.com"})
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "service_unavailable"
+
+
+def test_secure_register_and_login_flow(client):
+    reg = client.post("/auth/register", json={
+        "email": "secureuser@example.com",
+        "password": "SuperSecretPassword123!",
+        "display_name": "Secure User",
+    })
+    assert reg.status_code == 200
+    assert "access_token" in reg.json()
+    assert reg.json()["user"]["display_name"] == "Secure User"
+
+    dup = client.post("/auth/register", json={
+        "email": "secureuser@example.com",
+        "password": "AnotherPassword123!",
+        "display_name": "Duplicate User",
+    })
+    assert dup.status_code == 409
+
+    login_ok = client.post("/auth/login", json={
+        "email": "secureuser@example.com",
+        "password": "SuperSecretPassword123!",
+    })
+    assert login_ok.status_code == 200
+    assert "access_token" in login_ok.json()
+
+    login_bad = client.post("/auth/login", json={
+        "email": "secureuser@example.com",
+        "password": "WrongPassword!",
+    })
+    assert login_bad.status_code == 401

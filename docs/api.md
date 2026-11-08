@@ -20,10 +20,31 @@ Base URL defaults to `http://localhost:8000`. JSON errors use `{"error":{"code":
 | GET | `/transactions/{transaction_id}` | Read one owned transaction | Yes |
 | PATCH | `/transactions/{transaction_id}` | Edit with required `expected_version` | Yes |
 | DELETE | `/transactions/{transaction_id}?expected_version=N` | Permanently delete with an expected version | Yes |
+| POST | `/groups` | Create an owner-scoped group with an `Idempotency-Key` | Yes |
+| GET | `/groups` | List the current owner's groups | Yes |
+| GET | `/groups/{group_id}` | Read one owned group | Yes |
+| PATCH | `/groups/{group_id}` | Update group name, description, or members with `expected_version` | Yes |
+| DELETE | `/groups/{group_id}?expected_version=N` | Permanently delete an owned group with an expected version | Yes |
+| POST | `/groups/{group_id}/expenses` | Record a shared expense with an `Idempotency-Key` | Yes |
+| GET | `/groups/{group_id}/expenses` | List expenses for an owned group | Yes |
+| GET | `/groups/{group_id}/settlements` | Derive member balances and suggested settlement transfers | Yes |
+| POST | `/recurrences` | Create an idempotent weekly/monthly recurring expense schedule | Yes |
+| GET | `/recurrences` | List recurring expense schedules | Yes |
+| POST | `/recurrences/process-due` | Idempotently generate due expense transactions for the authenticated owner | Yes |
+| PATCH | `/recurrences/{schedule_id}` | Pause/resume with required `expected_version` | Yes |
+| DELETE | `/recurrences/{schedule_id}?expected_version=N` | Delete a schedule; previously generated transactions remain | Yes |
 
 Create requires `kind` (`income` or `expense`), positive integer `amount_minor`, explicit supported `currency`, `category`, and a timezone-aware ISO `occurred_at`; `notes` and `payment_method` are optional. Supported currencies are USD, CAD, EUR, GBP, AUD, NZD, and JPY. Timestamps are normalized to UTC. The UI interprets calendar dates in the profile timezone and sends noon in that timezone to avoid midnight/DST boundary ambiguity. List date filters are UTC calendar dates; `end_date` is inclusive. Dashboard defaults to the current UTC month, allows a maximum 366-day range, and returns separate totals per currency without conversion.
 
-`GET /transactions` returns `{items, next_cursor}` without a total count. The cursor is opaque; the authenticated owner is always derived from the token. Create idempotency keys are retained for 30 days; a retry with the same key/body returns the original record, while a changed body returns `409`. Updates/deletes with a stale version return `409`. Deletes are permanent in this phase. Recurrence is not implemented; entries do not auto-repeat.
+`GET /transactions` returns `{items, next_cursor}` without a total count. The cursor is opaque; the authenticated owner is always derived from the token. Create idempotency keys are retained for 30 days; a retry with the same key/body returns the original record, while a changed body returns `409`. Updates/deletes with a stale version return `409`. Deletes are permanent.
+
+## Groups and reports
+
+Groups require at least two unique member identifiers. The authenticated owner is added automatically, using the email claim only as a ledger label. Member labels do not grant API access; authorization always uses the verified subject claim. Each group has one supported currency; shared expenses must use that currency, and the payer and all split participants must be group members. Equal splits distribute any minor-unit remainder deterministically. Custom split amounts are positive integer minor units and must cover every member and sum exactly to the expense total. Group expense creation is owner-scoped and idempotent. `GET /groups/{group_id}/settlements` calculates net balances and a deterministic suggested transfer plan from recorded expenses; it does not mark transfers as paid or create payment records. Group CRUD/expense storage uses SQLite locally and owner-partitioned DynamoDB in AWS. Production IAM and API routing are described in the SAM template; live AWS integration still requires the deployment checks in `docs/deployment.md`.
+
+The Reports UI uses the authenticated `/dashboard` and `/transactions` APIs with a UTC date range capped at 366 days. It follows opaque transaction cursors to retrieve the complete matching record set and creates CSV in the browser. The subject is derived by the API from the verified token, never supplied by the UI. Export contains transaction fields only, does not include an owner identifier, and escapes formula-leading text values. Multi-currency aggregates and charts stay separated by currency; no conversion is applied.
+
+Recurring schedules support weekly or monthly intervals for expenses. `POST /recurrences/process-due` processes up to 100 due occurrences per schedule per request and advances the stored schedule cursor; repeat requests are idempotent per schedule/date. The frontend calls it after the authenticated session starts. Monthly dates retain their original day-of-month and clamp to each month's last day when needed. Generation is request-driven, not a background timer, and stops when the app is closed. Pausing/resuming requires `expected_version`; deleting a schedule does not delete transactions already generated from it. Budget threshold alerts are currently in-app only; no external email, push, or SMS is sent.
 
 Cognito operations (sign-up, confirmation, sign-in, password reset, and sign-out) are performed by the Amplify Auth SDK against the configured Cognito User Pool. The API accepts Cognito **ID tokens** and verifies RS256 signature against the pool JWKS, issuer, client audience, expiry, token-use claim, subject, and email. Local tokens are HS256-signed using a development-only secret and are accepted only when `APP_ENV=local`.
 

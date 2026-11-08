@@ -1,12 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: SmartSpend authentication, profile, and personal transactions foundation. Not production-hardened.
+Description: SmartSpend authenticated finance API with owner-scoped DynamoDB persistence.
 
 Parameters:
   WebOrigin:
     Type: String
-    Default: http://localhost:5173
-    Description: Exact frontend origin allowed by API Gateway CORS.
+    Description: HTTPS origin of the deployed frontend; local HTTP origins are not accepted.
+    AllowedPattern: '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'
+    ConstraintDescription: Provide one HTTPS origin without a path, query, or trailing slash.
   ApiStageName:
     Type: String
     Default: v1
@@ -14,8 +15,8 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.12
-    Timeout: 15
-    MemorySize: 256
+    Timeout: 30
+    MemorySize: 512
     Tracing: Active
     Environment:
       Variables:
@@ -27,6 +28,9 @@ Globals:
         TRANSACTIONS_TABLE: !Ref TransactionsTable
         BUDGETS_TABLE: !Ref BudgetsTable
         IDEMPOTENCY_TABLE: !Ref IdempotencyTable
+        GROUPS_TABLE: !Ref GroupsTable
+        SHARED_EXPENSES_TABLE: !Ref SharedExpensesTable
+        RECURRING_SCHEDULES_TABLE: !Ref RecurringSchedulesTable
         API_CORS_ORIGINS: !Ref WebOrigin
     LoggingConfig:
       LogFormat: JSON
@@ -34,10 +38,33 @@ Globals:
       SystemLogLevel: WARN
 
 Resources:
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/http-api/smartspend-${AWS::StackName}
+      RetentionInDays: 30
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProfileFunction}
+      RetentionInDays: 30
+
   SmartSpendApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: !Ref ApiStageName
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status"}'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      FailOnWarnings: true
       CorsConfiguration:
         AllowOrigins: [!Ref WebOrigin]
         AllowHeaders: [Authorization, Content-Type, Idempotency-Key, X-Request-ID]
@@ -54,6 +81,8 @@ Resources:
 
   SmartSpendUserPool:
     Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub smartspend-${AWS::StackName}
       UsernameAttributes: [email]
@@ -102,8 +131,8 @@ Resources:
 
   ProfilesTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub smartspend-profiles-${AWS::StackName}
       BillingMode: PAY_PER_REQUEST
@@ -116,12 +145,12 @@ Resources:
       SSESpecification:
         SSEEnabled: true
       PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: false
+        PointInTimeRecoveryEnabled: true
 
   TransactionsTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub smartspend-transactions-${AWS::StackName}
       BillingMode: PAY_PER_REQUEST
@@ -149,12 +178,12 @@ Resources:
       SSESpecification:
         SSEEnabled: true
       PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: false
+        PointInTimeRecoveryEnabled: true
 
   BudgetsTable:
     Type: AWS::DynamoDB::Table
-    DeletionPolicy: Delete
-    UpdateReplacePolicy: Delete
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub smartspend-budgets-${AWS::StackName}
       BillingMode: PAY_PER_REQUEST
@@ -171,7 +200,7 @@ Resources:
       SSESpecification:
         SSEEnabled: true
       PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: false
+        PointInTimeRecoveryEnabled: true
 
   IdempotencyTable:
     Type: AWS::DynamoDB::Table
@@ -195,6 +224,72 @@ Resources:
         Enabled: true
       SSESpecification:
         SSEEnabled: true
+
+  GroupsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub smartspend-groups-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_id
+          AttributeType: S
+        - AttributeName: group_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_id
+          KeyType: HASH
+        - AttributeName: group_id
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  SharedExpensesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub smartspend-shared-expenses-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_id
+          AttributeType: S
+        - AttributeName: group_sort_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_id
+          KeyType: HASH
+        - AttributeName: group_sort_key
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  RecurringSchedulesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub smartspend-recurring-schedules-${AWS::StackName}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: owner_id
+          AttributeType: S
+        - AttributeName: schedule_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: owner_id
+          KeyType: HASH
+        - AttributeName: schedule_id
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
 
   ProfileFunction:
     Type: AWS::Serverless::Function
@@ -226,6 +321,22 @@ Resources:
               - Effect: Allow
                 Action:
                   - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:ConditionCheckItem
+                Resource:
+                  - !GetAtt GroupsTable.Arn
+                  - !GetAtt SharedExpensesTable.Arn
+                  - !GetAtt RecurringSchedulesTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:BatchWriteItem
+                Resource: !GetAtt SharedExpensesTable.Arn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
                 Resource: !GetAtt IdempotencyTable.Arn
               - Effect: Allow
                 Action:
@@ -233,6 +344,9 @@ Resources:
                 Resource:
                   - !GetAtt TransactionsTable.Arn
                   - !GetAtt BudgetsTable.Arn
+                  - !GetAtt GroupsTable.Arn
+                  - !GetAtt SharedExpensesTable.Arn
+                  - !GetAtt RecurringSchedulesTable.Arn
                   - !GetAtt IdempotencyTable.Arn
       Events:
         PublicHealth:
@@ -241,14 +355,6 @@ Resources:
             ApiId: !Ref SmartSpendApi
             Path: /health
             Method: GET
-            Auth:
-              Authorizer: NONE
-        LocalDevAuthDisabledInAws:
-          Type: HttpApi
-          Properties:
-            ApiId: !Ref SmartSpendApi
-            Path: /auth/dev-login
-            Method: POST
             Auth:
               Authorizer: NONE
         Logout:
@@ -335,6 +441,84 @@ Resources:
             ApiId: !Ref SmartSpendApi
             Path: /budgets/{budget_id}
             Method: DELETE
+        CreateGroup:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups
+            Method: POST
+        ListGroups:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups
+            Method: GET
+        ReadGroup:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups/{group_id}
+            Method: GET
+        UpdateGroup:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups/{group_id}
+            Method: PATCH
+        DeleteGroup:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups/{group_id}
+            Method: DELETE
+        CreateGroupExpense:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups/{group_id}/expenses
+            Method: POST
+        ListGroupExpenses:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups/{group_id}/expenses
+            Method: GET
+        GroupSettlements:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /groups/{group_id}/settlements
+            Method: GET
+        CreateRecurrence:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /recurrences
+            Method: POST
+        ListRecurrences:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /recurrences
+            Method: GET
+        ProcessDueRecurrences:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /recurrences/process-due
+            Method: POST
+        UpdateRecurrence:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /recurrences/{schedule_id}
+            Method: PATCH
+        DeleteRecurrence:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SmartSpendApi
+            Path: /recurrences/{schedule_id}
+            Method: DELETE
 
 Outputs:
   ApiBaseUrl:
@@ -352,3 +536,9 @@ Outputs:
     Value: !Ref BudgetsTable
   IdempotencyTableName:
     Value: !Ref IdempotencyTable
+  GroupsTableName:
+    Value: !Ref GroupsTable
+  SharedExpensesTableName:
+    Value: !Ref SharedExpensesTable
+  RecurringSchedulesTableName:
+    Value: !Ref RecurringSchedulesTable

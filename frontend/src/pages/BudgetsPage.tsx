@@ -168,9 +168,9 @@ export function BudgetsPage() {
     }
   }
 
-  return <div className="space-y-7">
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div><p className="text-sm font-medium text-muted">Plan your spending</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-ink">Budgets</h1><p className="mt-2 text-sm text-muted">Set monthly or custom limits and track recorded expenses by currency.</p></div>
+  return <div className="page-shell space-y-7">
+    <div className="page-heading flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+      <div><p className="page-eyebrow">Plan your spending</p><h1 className="page-title mt-2 text-ink">Budgets</h1><p className="page-description mt-2">Set monthly or custom limits and track recorded expenses by currency.</p></div>
       <Button onClick={openCreate}><Plus size={17} /> Create budget</Button>
     </div>
 
@@ -183,7 +183,7 @@ export function BudgetsPage() {
       <h2 className="mt-4 font-bold text-ink">No budgets yet</h2>
       <p className="mx-auto mt-1 max-w-lg text-sm leading-6 text-muted">Create a monthly or custom budget to see progress from your own saved expense transactions. SmartSpend never inserts sample financial data.</p>
       <Button className="mt-5" onClick={openCreate}><Plus size={16} /> Create your first budget</Button>
-    </section> : <section aria-label="Your budgets" className="grid gap-5 xl:grid-cols-2">{budgets.map(budget => <article key={budget.budget_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+    </section> : <section aria-label="Your budgets" className="grid gap-5 xl:grid-cols-2">{budgets.map(budget => <article key={budget.budget_id} className="surface-card rounded-2xl p-5 shadow-sm sm:p-6">
       <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="truncate text-lg font-bold text-ink">{budget.name}</h2><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-600">{budget.period_type}</span></div><p className="mt-1 text-sm text-muted">{displayDate(budget.start_date)} – {displayDate(budget.end_date)} · {budget.currency}</p></div><div className="flex shrink-0 gap-1"><button aria-label={`Edit ${budget.name}`} onClick={() => openEdit(budget)} className="rounded-lg p-2 text-slate-500 hover:bg-indigo-50 hover:text-brand"><Pencil size={16} /></button><button aria-label={`Delete ${budget.name}`} onClick={() => void remove(budget)} className="rounded-lg p-2 text-slate-500 hover:bg-rose-50 hover:text-rose-600"><Trash2 size={16} /></button></div></div>
       <ul className="mt-6 space-y-5">{budget.categories.map(progress => {
         const width = Math.min(100, Math.max(0, progress.percent_used));

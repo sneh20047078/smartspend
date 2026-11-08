@@ -21,6 +21,9 @@ class SQLiteProfileRepository:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS users (
+                email TEXT PRIMARY KEY, password_hash TEXT NOT NULL, display_name TEXT NOT NULL, created_at TEXT NOT NULL
+            )""")
             connection.execute("""CREATE TABLE IF NOT EXISTS profiles (
                 subject TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT NOT NULL,
                 preferred_currency TEXT NOT NULL, timezone TEXT NOT NULL, theme TEXT NOT NULL
@@ -61,6 +64,64 @@ class SQLiteProfileRepository:
             if cursor.rowcount != 1:
                 raise KeyError(subject)
             row = connection.execute("SELECT * FROM profiles WHERE subject = ?", (subject,)).fetchone()
+        return self._profile(row)
+    @staticmethod
+    def _hash_password(password: str) -> str:
+        import hashlib, os
+        salt = os.urandom(16)
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+        return f"{salt.hex()}:{dk.hex()}"
+
+    @staticmethod
+    def _verify_password(password: str, hashed: str) -> bool:
+        import hashlib, secrets
+        try:
+            salt_hex, dk_hex = hashed.split(":")
+            salt = bytes.fromhex(salt_hex)
+            expected_dk = bytes.fromhex(dk_hex)
+            dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+            return secrets.compare_digest(dk, expected_dk)
+        except Exception:
+            return False
+
+    def register_user(self, email: str, password: str, display_name: str) -> Profile:
+        from datetime import UTC, datetime
+        normalized = email.strip().lower()
+        clean_name = display_name.strip() or normalized.split("@")[0]
+        hashed = self._hash_password(password)
+        subject = f"usr:{normalized}"
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as connection:
+            existing = connection.execute("SELECT email FROM users WHERE email = ?", (normalized,)).fetchone()
+            if existing is not None:
+                raise ValueError("An account with this email address already exists.")
+            connection.execute(
+                "INSERT INTO users(email, password_hash, display_name, created_at) VALUES(?,?,?,?)",
+                (normalized, hashed, clean_name, now),
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO profiles(subject, email, display_name, preferred_currency, timezone, theme) VALUES(?,?,?,?,?,?)",
+                (subject, normalized, clean_name, "USD", "UTC", "system"),
+            )
+            row = connection.execute("SELECT * FROM profiles WHERE subject = ?", (subject,)).fetchone()
+        return self._profile(row)
+
+    def authenticate_user(self, email: str, password: str) -> Profile | None:
+        normalized = email.strip().lower()
+        with self._connect() as connection:
+            user = connection.execute("SELECT * FROM users WHERE email = ?", (normalized,)).fetchone()
+            if user is None:
+                return None
+            if not self._verify_password(password, user["password_hash"]):
+                return None
+            subject = f"usr:{normalized}"
+            row = connection.execute("SELECT * FROM profiles WHERE subject = ?", (subject,)).fetchone()
+            if row is None:
+                connection.execute(
+                    "INSERT INTO profiles(subject, email, display_name, preferred_currency, timezone, theme) VALUES(?,?,?,?,?,?)",
+                    (subject, normalized, user["display_name"], "USD", "UTC", "system"),
+                )
+                row = connection.execute("SELECT * FROM profiles WHERE subject = ?", (subject,)).fetchone()
         return self._profile(row)
 
 
@@ -113,4 +174,6 @@ class DynamoDBProfileRepository:
 def create_profile_repository(settings: Settings) -> ProfileRepository:
     if settings.profile_table:
         return DynamoDBProfileRepository(settings.profile_table, settings.aws_region)
+    if settings.app_env == "aws":
+        raise ValueError("A DynamoDB profile table must be configured in AWS")
     return SQLiteProfileRepository(settings.profile_db_path)

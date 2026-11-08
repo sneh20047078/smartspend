@@ -12,13 +12,13 @@ class AuthenticationError(Exception):
     """Raised when a bearer token cannot be trusted."""
 
 
-def issue_local_token(email: str, settings: Settings) -> tuple[str, str]:
+def issue_local_token(email: str, settings: Settings, subject: str | None = None) -> tuple[str, str]:
     if settings.app_env != "local":
         raise AuthenticationError("Local authentication is disabled")
     if len(settings.smartspend_dev_jwt_secret) < 32:
         raise AuthenticationError("Local authentication secret is not configured")
     normalized_email = email.strip().lower()
-    subject = f"local:{normalized_email}"
+    subject = subject or f"local:{normalized_email}"
     token = jwt.encode(
         {"sub": subject, "email": normalized_email, "iss": "smartspend-local", "aud": "smartspend-local-api",
         "iat": int(__import__("time").time()), "exp": int(__import__("time").time()) + settings.smartspend_dev_token_minutes * 60,

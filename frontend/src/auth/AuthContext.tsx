@@ -8,7 +8,7 @@ type AuthContextValue = {
   user: Profile | null;
   token: string | null;
   loading: boolean;
-  mode: 'local' | 'cognito';
+  mode: 'local' | 'cognito' | 'secure';
   login: (email: string, password?: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
   confirmRegistration: (email: string, code: string) => Promise<void>;
@@ -75,11 +75,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { mounted = false; };
   }, []);
 
+  const authModeEnv = import.meta.env.VITE_AUTH_MODE;
+  const currentMode: 'local' | 'cognito' | 'secure' = cognitoEnabled
+    ? 'cognito'
+    : authModeEnv === 'local'
+    ? 'local'
+    : 'secure';
+
   const value = useMemo<AuthContextValue>(() => ({
     user,
     token,
     loading,
-    mode: cognitoEnabled ? 'cognito' : 'local',
+    mode: currentMode,
     async login(email, password) {
       if (cognitoEnabled) {
         if (!password) throw new Error('Enter your password.');
@@ -96,6 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const activeToken = await currentCognitoToken();
         if (!activeToken) throw new Error('Cognito did not return an identity token.');
         await loadProfile(activeToken);
+      } else if (password) {
+        const result = await api.login(email, password);
+        sessionStorage.setItem(TOKEN_KEY, result.access_token);
+        await loadProfile(result.access_token);
       } else {
         const result = await api.localLogin(email);
         sessionStorage.setItem(TOKEN_KEY, result.access_token);
@@ -103,61 +114,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     },
     async register(email, password, displayName) {
-      if (!cognitoEnabled) throw new Error('Account registration requires a configured Cognito User Pool. Local mode does not store passwords.');
-      await configureCognito();
-      const { signUp } = await import('aws-amplify/auth');
-      const result = await signUp({
-        username: email,
-        password,
-        options: { userAttributes: { email, name: displayName } },
-      });
-      if (result.nextStep.signUpStep !== 'CONFIRM_SIGN_UP' && result.nextStep.signUpStep !== 'DONE') {
-        throw new Error(`Sign-up requires an additional step: ${result.nextStep.signUpStep}.`);
+      if (cognitoEnabled) {
+        await configureCognito();
+        const { signUp } = await import('aws-amplify/auth');
+        const result = await signUp({
+          username: email,
+          password,
+          options: { userAttributes: { email, name: displayName } },
+        });
+        if (result.nextStep.signUpStep !== 'CONFIRM_SIGN_UP' && result.nextStep.signUpStep !== 'DONE') {
+          throw new Error(`Sign-up requires an additional step: ${result.nextStep.signUpStep}.`);
+        }
+      } else {
+        const result = await api.register(email, password, displayName);
+        sessionStorage.setItem(TOKEN_KEY, result.access_token);
+        await loadProfile(result.access_token);
       }
     },
     async confirmRegistration(email, code) {
-      if (!cognitoEnabled) throw new Error('Account registration requires Cognito.');
+      if (!cognitoEnabled) return;
       await configureCognito();
       const { confirmSignUp } = await import('aws-amplify/auth');
       await confirmSignUp({ username: email, confirmationCode: code });
     },
     async beginPasswordReset(email) {
-      if (!cognitoEnabled) throw new Error('Password reset requires Cognito. Local mode does not use passwords.');
+      if (!cognitoEnabled) throw new Error('Password reset requires a configured Cognito User Pool.');
       await configureCognito();
       const { resetPassword } = await import('aws-amplify/auth');
       await resetPassword({ username: email });
     },
     async finishPasswordReset(email, code, password) {
-      if (!cognitoEnabled) throw new Error('Password reset requires Cognito.');
+      if (!cognitoEnabled) throw new Error('Password reset requires a configured Cognito User Pool.');
       await configureCognito();
       const { confirmResetPassword } = await import('aws-amplify/auth');
       await confirmResetPassword({ username: email, confirmationCode: code, newPassword: password });
     },
     async saveProfile(patch) {
-      if (!token) throw new Error('Your session has expired. Sign in again.');
+      if (!token) throw new Error('You must be signed in to save profile preferences.');
       const updated = await api.updateProfile(token, patch);
       setUser(updated);
     },
     async logout() {
-      if (cognitoEnabled) {
-        await configureCognito();
-        const { signOut } = await import('aws-amplify/auth');
-        await signOut();
-      } else {
-        if (token) await api.logout(token).catch(() => undefined);
-        sessionStorage.removeItem(TOKEN_KEY);
+      try {
+        if (token) await api.logout(token);
+      } catch {
+        // Discard local token even if network logout fails
       }
+      if (cognitoEnabled) {
+        try {
+          await configureCognito();
+          const { signOut } = await import('aws-amplify/auth');
+          await signOut();
+        } catch {
+          // Continue local cleanup if sign-out fails
+        }
+      }
+      sessionStorage.removeItem(TOKEN_KEY);
       setToken(null);
       setUser(null);
     },
-    async refreshProfile() { await refreshProfile(); },
-  }), [user, token, loading, loadProfile, refreshProfile]);
+    refreshProfile,
+  }), [user, token, loading, currentMode, loadProfile, refreshProfile]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth(): AuthContextValue {
+export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  if (!context) throw new Error('useAuth must be used within an AuthProvider.');
   return context;
 }

@@ -1,0 +1,36 @@
+services:
+  api:
+    image: snehsp/smartspend-api:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      SMARTSPEND_DEV_JWT_SECRET: ${SMARTSPEND_DEV_JWT_SECRET:?Set SMARTSPEND_DEV_JWT_SECRET before starting}
+    volumes:
+      - smartspend-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+  web:
+    image: snehsp/smartspend-web:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  smartspend-data:

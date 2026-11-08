@@ -180,13 +180,13 @@ export function TransactionsPage() {
   }
 
   const categories = form.kind === 'expense' ? expenseCategories : incomeCategories;
-  return <div className="space-y-7">
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div><p className="text-sm font-medium text-muted">Income and expenses</p><h1 className="mt-1 text-3xl font-bold tracking-tight text-ink">Transactions</h1><p className="mt-2 text-sm text-muted">Amounts are stored in minor units and always retain their currency.</p></div>
+  return <div className="page-shell space-y-7">
+    <div className="page-heading flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+      <div><p className="page-eyebrow">Income and expenses</p><h1 className="page-title mt-2 text-ink">Transactions</h1><p className="page-description mt-2">Amounts are stored in minor units and always retain their currency.</p></div>
       <Button onClick={openCreate}><Plus size={17} /> Add transaction</Button>
     </div>
 
-    <form onSubmit={applyFilters} className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-7 lg:items-end">
+    <form onSubmit={applyFilters} className="surface-card grid gap-3 rounded-2xl p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-7 lg:items-end">
       <div className="space-y-1.5"><label htmlFor="filter-kind" className="block text-xs font-semibold text-slate-600">Type</label><select id="filter-kind" name="kind" defaultValue={appliedFilters.kind || ''} className="field"><option value="">All types</option><option value="expense">Expenses</option><option value="income">Income</option></select></div>
       <TextField label="From (UTC date)" type="date" name="start_date" defaultValue={appliedFilters.start_date} />
       <TextField label="To (UTC date)" type="date" name="end_date" defaultValue={appliedFilters.end_date} />
@@ -199,7 +199,7 @@ export function TransactionsPage() {
     {loadError && <div role="alert" className="flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"><span>{loadError}</span><button aria-label="Dismiss error" onClick={() => setLoadError('')}><X size={16} /></button></div>}
     {success && <div role="status" className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><span>{success}</span><button aria-label="Dismiss notification" onClick={() => setSuccess('')}><X size={16} /></button></div>}
 
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-labelledby="transaction-list-heading">
+    <section className="surface-card data-table overflow-hidden rounded-2xl shadow-sm" aria-labelledby="transaction-list-heading">
       <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4"><div><h2 id="transaction-list-heading" className="font-bold text-ink">All transactions</h2><p className="mt-1 text-xs text-muted">Dates are stored in UTC and displayed in {user?.timezone || 'UTC'}.</p></div><span className="text-xs font-medium text-slate-500">{loading ? 'Loading…' : `${items.length} shown`}</span></div>
       {loading ? <div className="animate-pulse space-y-4 p-6" aria-label="Loading transactions">{[1, 2, 3].map(row => <div key={row} className="h-12 rounded-lg bg-slate-100" />)}</div> : items.length === 0 ? <div className="px-6 py-14 text-center"><div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-brand-soft text-brand"><Search size={20} /></div><h3 className="mt-4 font-bold text-ink">No transactions found</h3><p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-muted">Add an income or expense, or adjust your filters. SmartSpend never inserts sample financial data.</p><Button className="mt-5" onClick={openCreate}><Plus size={16} /> Add transaction</Button></div> : <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">

@@ -37,6 +37,16 @@ export async function request<T>(path: string, token?: string, init: RequestInit
 }
 
 export const api = {
+  login: (email: string, password: string) =>
+    request<{ access_token: string; expires_in: number }>('/auth/login', undefined, {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+  register: (email: string, password: string, displayName: string) =>
+    request<{ access_token: string; expires_in: number }>('/auth/register', undefined, {
+      method: 'POST',
+      body: JSON.stringify({ email, password, display_name: displayName }),
+    }),
   localLogin: (email: string) => request<{ access_token: string; expires_in: number }>('/auth/dev-login', undefined, {
     method: 'POST',
     body: JSON.stringify({ email }),
